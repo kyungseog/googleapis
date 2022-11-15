@@ -8,6 +8,7 @@ require('dotenv').config();
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 const TOKEN_PATH = path.join(process.cwd(), 'token.json');
 const CREDENTIALS_PATH = path.join(process.cwd(), 'credentials.json');
+const EMAIL_PATH = path.join(process.cwd(), 'email.json');
 
 start();
 
@@ -17,8 +18,10 @@ async function start() {
   const today = new Date();
   let tomorrow = new Date();
   tomorrow.setDate(today.getDate() + 1);
+  const emailData = await fs.promises.readFile(EMAIL_PATH);
+  const emailInfo = JSON.parse(emailData);
   for(id of calendarIds) {
-    listCalendars(auth, id, today, tomorrow);
+    listCalendars(auth, id, today, tomorrow, emailInfo);
   }
 }
 
@@ -60,7 +63,7 @@ async function authorize() {
   return client;
 }
 
-async function listCalendars(auth, id, today, tomorrow) {
+async function listCalendars(auth, id, today, tomorrow, emailInfo) {
   const calendar = google.calendar({version: 'v3', auth});
   const resList = await calendar.events.list({
     calendarId: id,
@@ -78,6 +81,8 @@ async function listCalendars(auth, id, today, tomorrow) {
   events.map((event, i) => {
     const start = event.start.dateTime || event.start.date;
     const end = event.end.dateTime || event.end.date;
-    console.log(`${event.location} : ${start} / ${end} / ${event.creator.email} / ${event.summary}`);
+    const name = emailInfo.filter( r => r.email == event.creator.email );
+    const roomIndex = event.location.indexOf('-') + 1;
+    console.log(`${event.location.substring(roomIndex,roomIndex + 3)} : ${start} / ${end} / ${name == undefined || name.length == 0 ? event.creator.email : name[0].name} / ${event.summary}`);
   });
 }
