@@ -1,66 +1,44 @@
 const fs = require('fs');
 const path = require('path');
 const process = require('process');
-const {authenticate} = require('@google-cloud/local-auth');
 const {google} = require('googleapis');
+const mysql = require("mysql");
 require('dotenv').config();
 
-const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 const TOKEN_PATH = path.join(process.cwd(), 'token.json');
-const CREDENTIALS_PATH = path.join(process.cwd(), 'credentials.json');
 const EMAIL_PATH = path.join(process.cwd(), 'email.json');
 
-start();
+const db = mysql.createConnection({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_DATABASE
+});
+
+start()
 
 async function start() {
-  const auth = await authorize();
+  const content = await fs.promises.readFile(TOKEN_PATH);
+  const credentials = JSON.parse(content);
+  const auth = google.auth.fromJSON(credentials);
   const calendarIds = [process.env.A_ROOM_ID,process.env.B_ROOM_ID,process.env.C_ROOM_ID,process.env.D_ROOM_ID,process.env.E_ROOM_ID,process.env.F_ROOM_ID,process.env.G_ROOM_ID]
   const today = new Date();
   let tomorrow = new Date();
   tomorrow.setDate(today.getDate() + 1);
   const emailData = await fs.promises.readFile(EMAIL_PATH);
   const emailInfo = JSON.parse(emailData);
+  let data = [];
   for(id of calendarIds) {
-    listCalendars(auth, id, today, tomorrow, emailInfo);
+    let room = await listCalendars(auth, id, today, tomorrow, emailInfo);
+    if(room){
+      for (let i = 0; i < room.length; i++){
+        data.push(room[i]);
+      }
+    }
   }
-}
-
-async function loadSavedCredentialsIfExist() {
-  try {
-    const content = await fs.promises.readFile(TOKEN_PATH);
-    const credentials = JSON.parse(content);
-    return google.auth.fromJSON(credentials);
-  } catch (err) {
-    return null;
-  }
-}
-
-async function saveCredentials(client) {
-  const content = await fs.promises.readFile(CREDENTIALS_PATH);
-  const keys = JSON.parse(content);
-  const key = keys.installed || keys.web;
-  const payload = JSON.stringify({
-    type: 'authorized_user',
-    client_id: key.client_id,
-    client_secret: key.client_secret,
-    refresh_token: client.credentials.refresh_token,
-  });
-  await fs.promises.writeFile(TOKEN_PATH, payload);
-}
-
-async function authorize() {
-  let client = await loadSavedCredentialsIfExist();
-  if (client) {
-    return client;
-  }
-  client = await authenticate({
-    scopes: SCOPES,
-    keyfilePath: CREDENTIALS_PATH,
-  });
-  if (client.credentials) {
-    await saveCredentials(client);
-  }
-  return client;
+  db.connect();
+  db.query('INSERT INTO rooms (id, room_id, start_date, end_date, creator, summary) VALUES ?', [data]);
+  db.end();
 }
 
 async function listCalendars(auth, id, today, tomorrow, emailInfo) {
@@ -75,14 +53,14 @@ async function listCalendars(auth, id, today, tomorrow, emailInfo) {
   });
   const events = resList.data.items;
   if (!events || events.length === 0) {
-    console.log('No events found.');
     return;
   }
-  events.map((event, i) => {
+  const roomsData = events.map((event, i) => {
     const start = event.start.dateTime || event.start.date;
     const end = event.end.dateTime || event.end.date;
     const name = emailInfo.filter( r => r.email == event.creator.email );
     const roomIndex = event.location.indexOf('-') + 1;
-    console.log(`${event.location.substring(roomIndex,roomIndex + 3)} : ${start} / ${end} / ${name == undefined || name.length == 0 ? event.creator.email : name[0].name} / ${event.summary}`);
+    return [event.id, event.location.substring(roomIndex,roomIndex + 3), start, end, name == undefined || name.length == 0 ? event.creator.email : name[0].name, event.summary];
   });
+  return roomsData;
 }
